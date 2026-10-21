@@ -11,6 +11,7 @@ create table if not exists public.boletas (
               check (estado in ('disponible', 'vendida')),
   vendedor    text,
   comprador   text,
+  contacto    text,
   precio      numeric(12, 2) not null default 0 check (precio >= 0),
   vendida_en  timestamptz,
   -- Una boleta vendida siempre debe tener vendedor
@@ -18,6 +19,9 @@ create table if not exists public.boletas (
     estado = 'disponible' or (vendedor is not null and length(trim(vendedor)) > 0)
   )
 );
+
+-- Para tablas creadas con una versión anterior de este script
+alter table public.boletas add column if not exists contacto text;
 
 -- 2) Permisos para la clave pública (anon / publishable)
 grant select, insert, update, delete on public.boletas to anon, authenticated;

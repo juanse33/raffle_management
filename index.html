@@ -491,6 +491,18 @@
   .datos dt { color: var(--muted); font-size: 13.5px; }
   .datos dd { margin: 0; font-weight: 700; text-align: right; overflow-wrap: anywhere; }
   .datos dd.vacio { color: var(--muted); font-weight: 500; font-style: italic; }
+  .datos dd a {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 9px;
+    border-radius: 99px;
+    background: var(--ok-bg);
+    color: var(--ok);
+    font-size: 12.5px;
+    font-style: normal;
+    text-decoration: none;
+  }
+  .datos dd a:hover { text-decoration: underline; }
 
   .plan { list-style: none; margin: 0; padding: 12px 14px; display: grid; gap: 8px; border-radius: 14px; background: var(--surface-2); font-size: 13.5px; }
   .plan li { display: flex; gap: 10px; align-items: flex-start; }
@@ -711,6 +723,10 @@
         <label for="inpComprador">Comprador <span class="opc">(opcional)</span></label>
         <input id="inpComprador" maxlength="80" autocomplete="off" placeholder="Nombre de quien compra">
       </div>
+      <div class="campo">
+        <label for="inpContacto">Contacto del comprador <span class="opc">(opcional)</span></label>
+        <input id="inpContacto" type="tel" inputmode="tel" maxlength="40" autocomplete="off" placeholder="Celular o WhatsApp">
+      </div>
       <p class="error" id="ventaError" role="alert"></p>
     </div>
     <div class="d-pie">
@@ -736,6 +752,7 @@
     <dl class="datos">
       <div><dt>Vendedor</dt><dd id="detVendedor"></dd></div>
       <div><dt>Comprador</dt><dd id="detComprador"></dd></div>
+      <div><dt>Contacto</dt><dd id="detContacto"></dd></div>
       <div><dt>Precio</dt><dd id="detPrecio"></dd></div>
     </dl>
   </div>
@@ -850,6 +867,7 @@ const LOCALE = 'es-CO';        // es-MX, es-ES, es-AR…
 const DECIMALES = 0;           // 2 si tu moneda usa centavos
 const MAX_BOLETAS = 10000;
 const TABLA = 'boletas';
+const PREFIJO_PAIS = '57';     // indicativo para los enlaces de WhatsApp (57 = Colombia)
 
 /* ===================================================================== */
 
@@ -893,17 +911,17 @@ function crearAdaptadorSupabase() {
         if (filas.length < pagina) return todas;
       }
     },
-    async vender(numero, vendedor, comprador) {
+    async vender(numero, vendedor, comprador, contacto) {
       // La condición estado = 'disponible' evita que dos personas vendan la misma boleta.
       const filas = datos(await tabla()
-        .update({ estado: 'vendida', vendedor, comprador, vendida_en: new Date().toISOString() })
+        .update({ estado: 'vendida', vendedor, comprador, contacto, vendida_en: new Date().toISOString() })
         .eq('numero', numero).eq('estado', 'disponible').select());
       if (!filas.length) throw new ErrorRifa('YA_VENDIDA');
       return filas[0];
     },
     async anular(numero) {
       const filas = datos(await tabla()
-        .update({ estado: 'disponible', vendedor: null, comprador: null, vendida_en: null })
+        .update({ estado: 'disponible', vendedor: null, comprador: null, contacto: null, vendida_en: null })
         .eq('numero', numero).eq('estado', 'vendida').select());
       if (!filas.length) throw new ErrorRifa('YA_DISPONIBLE');
       return filas[0];
@@ -959,7 +977,7 @@ function crearAdaptadorSheets(url, obtenerPin) {
     requierePin: true,
     intervaloSondeo: 6000,   // sin tiempo real: se consulta la hoja cada ~6 s
     async listar() { return (await llamar('listar')).filas; },
-    async vender(numero, vendedor, comprador) { return (await llamar('vender', { numero, vendedor, comprador })).fila; },
+    async vender(numero, vendedor, comprador, contacto) { return (await llamar('vender', { numero, vendedor, comprador, contacto })).fila; },
     async anular(numero) { return (await llamar('anular', { numero })).fila; },
     async insertar(filas, progreso) {
       for (let i = 0; i < filas.length; i += 2000) {
@@ -994,25 +1012,25 @@ function crearAdaptadorLocal() {
   return {
     modo: 'demo',
     async listar() { await pausa(); return leer().map((f) => ({ ...f })); },
-    async vender(numero, vendedor, comprador) {
+    async vender(numero, vendedor, comprador, contacto) {
       await pausa();
       const filas = leer(); const b = buscar(filas, numero);
       if (!b || b.estado !== 'disponible') throw new ErrorRifa('YA_VENDIDA');
-      Object.assign(b, { estado: 'vendida', vendedor, comprador, vendida_en: new Date().toISOString() });
+      Object.assign(b, { estado: 'vendida', vendedor, comprador, contacto, vendida_en: new Date().toISOString() });
       guardar(filas); return { ...b };
     },
     async anular(numero) {
       await pausa();
       const filas = leer(); const b = buscar(filas, numero);
       if (!b || b.estado !== 'vendida') throw new ErrorRifa('YA_DISPONIBLE');
-      Object.assign(b, { estado: 'disponible', vendedor: null, comprador: null, vendida_en: null });
+      Object.assign(b, { estado: 'disponible', vendedor: null, comprador: null, contacto: null, vendida_en: null });
       guardar(filas); return { ...b };
     },
     async insertar(nuevas, progreso) {
       await pausa();
       const filas = leer(); const existentes = new Set(filas.map((f) => f.numero));
       if (nuevas.some((n) => existentes.has(n.numero))) throw Object.assign(new Error('duplicate key'), { code: '23505' });
-      guardar(filas.concat(nuevas.map((n) => ({ vendedor: null, comprador: null, vendida_en: null, ...n }))));
+      guardar(filas.concat(nuevas.map((n) => ({ vendedor: null, comprador: null, contacto: null, vendida_en: null, ...n }))));
       if (progreso) progreso(nuevas.length, nuevas.length);
     },
     async cambiarPrecioDisponibles(precio) {
@@ -1352,7 +1370,7 @@ function pintarBoleta(btn, b) {
 function coincide(b, q) {
   if (estado.filtro !== 'todas' && b.estado !== estado.filtro) return false;
   if (!q) return true;
-  if (/^\d+$/.test(q)) return fmtNum(b.numero).includes(q);
+  if (/^\d+$/.test(q)) return fmtNum(b.numero).includes(q) || (q.length >= 5 && String(b.contacto || '').replace(/\D/g, '').includes(q));
   return normalizar(b.vendedor).includes(q) || normalizar(b.comprador).includes(q);
 }
 
@@ -1492,6 +1510,7 @@ function abrirVenta(b) {
   inpVendedor.value = leerVendedorRecordado();
   inpVendedor.classList.remove('invalido');
   $('#inpComprador').value = '';
+  $('#inpContacto').value = '';
   $('#ventaError').textContent = '';
   dlgVenta.showModal();
   (inpVendedor.value ? $('#inpComprador') : inpVendedor).focus();
@@ -1502,6 +1521,7 @@ $('#formVenta').addEventListener('submit', async (e) => {
   const inpVendedor = $('#inpVendedor');
   const vendedor = limpiar(inpVendedor.value);
   const comprador = limpiar($('#inpComprador').value) || null;
+  const contacto = limpiar($('#inpContacto').value) || null;
   const numero = ventaActual;
   if (!vendedor) {
     inpVendedor.classList.add('invalido');
@@ -1513,7 +1533,7 @@ $('#formVenta').addEventListener('submit', async (e) => {
   operando = true;
   ocupado(btn, true, 'Guardando…');
   try {
-    const fila = await db.vender(numero, vendedor, comprador);
+    const fila = await db.vender(numero, vendedor, comprador, contacto);
     aplicarFila(fila);
     recordarVendedor(vendedor);
     dlgVenta.close();
@@ -1546,8 +1566,29 @@ function abrirDetalle(b) {
   const comp = $('#detComprador');
   comp.textContent = b.comprador || 'No registrado';
   comp.classList.toggle('vacio', !b.comprador);
+  const cont = $('#detContacto');
+  cont.textContent = b.contacto || 'No registrado';
+  cont.classList.toggle('vacio', !b.contacto);
+  const wa = enlaceWhatsApp(b.contacto);
+  if (wa) {
+    const a = document.createElement('a');
+    a.href = wa;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = 'WhatsApp';
+    cont.append(a);
+  }
   $('#detPrecio').textContent = dinero(b.precio);
   dlgDetalle.showModal();
+}
+
+// Convierte un teléfono en enlace de WhatsApp; agrega el indicativo si no lo trae.
+function enlaceWhatsApp(contacto) {
+  const texto = String(contacto || '').trim();
+  let digitos = texto.replace(/\D/g, '');
+  if (digitos.length < 7 || /@/.test(texto)) return null;
+  if (!texto.startsWith('+') && digitos.length <= 10) digitos = PREFIJO_PAIS + digitos.replace(/^0+/, '');
+  return 'https://wa.me/' + digitos;
 }
 
 $('#btnAnular').addEventListener('click', async () => {
@@ -1799,9 +1840,9 @@ $('#btnCsv').addEventListener('click', () => {
     if (/^[=+\-@]/.test(s)) s = "'" + s;   // evita que Excel lo interprete como fórmula
     return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  const lineas = [['Numero', 'Estado', 'Vendedor', 'Comprador', 'Precio', 'Fecha de venta'].join(';')];
+  const lineas = [['Numero', 'Estado', 'Vendedor', 'Comprador', 'Contacto', 'Precio', 'Fecha de venta'].join(';')];
   for (const b of filas) {
-    lineas.push([fmtNum(b.numero), b.estado, b.vendedor, b.comprador, Number(b.precio) || 0, b.vendida_en ? fmtFecha.format(new Date(b.vendida_en)) : ''].map(celda).join(';'));
+    lineas.push([fmtNum(b.numero), b.estado, b.vendedor, b.comprador, b.contacto, Number(b.precio) || 0, b.vendida_en ? fmtFecha.format(new Date(b.vendida_en)) : ''].map(celda).join(';'));
   }
   const blob = new Blob(['﻿' + lineas.join('\r\n')], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');

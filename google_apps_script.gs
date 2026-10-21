@@ -18,7 +18,7 @@
 const PIN_ADMIN = '1234';   // ← CÁMBIALO. Se pide para crear, ajustar o reiniciar la rifa.
 const ID_HOJA = '';         // Opcional: ID de la hoja si el script NO se creó desde ella.
 const HOJA = 'boletas';
-const COLUMNAS = ['numero', 'estado', 'vendedor', 'comprador', 'precio', 'vendida_en'];
+const COLUMNAS = ['numero', 'estado', 'vendedor', 'comprador', 'precio', 'vendida_en', 'contacto'];
 
 function doGet(e) {
   return atender_(Object.assign({ accion: 'listar' }, (e && e.parameter) || {}));
@@ -65,17 +65,18 @@ function ejecutar_(accion, p) {
       if (!b || b.estado !== 'disponible') falla_('YA_VENDIDA', null);
       const vendedor = texto_(p.vendedor, 60);
       const comprador = texto_(p.comprador, 80);
+      const contacto = texto_(p.contacto, 60);
       if (!vendedor) falla_('DATOS', 'El vendedor es obligatorio.');
       const ahora = new Date();
-      hoja.getRange(b._fila, 2, 1, 5).setValues([['vendida', celda_(vendedor), celda_(comprador), b.precio, ahora]]);
-      return { fila: publica_(Object.assign(b, { estado: 'vendida', vendedor: vendedor, comprador: comprador || null, vendida_en: ahora.toISOString() })) };
+      hoja.getRange(b._fila, 2, 1, 6).setValues([['vendida', celda_(vendedor), celda_(comprador), b.precio, ahora, comoTexto_(contacto)]]);
+      return { fila: publica_(Object.assign(b, { estado: 'vendida', vendedor: vendedor, comprador: comprador || null, contacto: contacto || null, vendida_en: ahora.toISOString() })) };
     }
 
     case 'anular': {
       const b = buscar_(filas, p.numero);
       if (!b || b.estado !== 'vendida') falla_('YA_DISPONIBLE', null);
-      hoja.getRange(b._fila, 2, 1, 5).setValues([['disponible', '', '', b.precio, '']]);
-      return { fila: publica_(Object.assign(b, { estado: 'disponible', vendedor: null, comprador: null, vendida_en: null })) };
+      hoja.getRange(b._fila, 2, 1, 6).setValues([['disponible', '', '', b.precio, '', '']]);
+      return { fila: publica_(Object.assign(b, { estado: 'disponible', vendedor: null, comprador: null, contacto: null, vendida_en: null })) };
     }
 
     case 'insertar': {
@@ -87,7 +88,7 @@ function ejecutar_(accion, p) {
         if (!Number.isInteger(numero) || numero < 0) falla_('DATOS', 'Número de boleta inválido.');
         if (!(precio >= 0)) falla_('DATOS', 'Precio inválido.');
         if (existentes.has(numero)) falla_('DUPLICADA', 'Esas boletas ya existen: alguien más acaba de crearlas. El tablero se actualizó.');
-        return [numero, 'disponible', '', '', precio, ''];
+        return [numero, 'disponible', '', '', precio, '', ''];
       });
       if (nuevas.length) hoja.getRange(hoja.getLastRow() + 1, 1, nuevas.length, COLUMNAS.length).setValues(nuevas);
       return { insertadas: nuevas.length };
@@ -136,7 +137,9 @@ function hoja_() {
   if (!libro) falla_('CONFIG', 'El script no está vinculado a una hoja. Escribe el ID de la hoja en ID_HOJA.');
   let hoja = libro.getSheetByName(HOJA);
   if (!hoja) hoja = libro.insertSheet(HOJA);
-  if (hoja.getLastRow() === 0) {
+  // Crea el encabezado, o lo completa si la hoja viene de una versión anterior (sin "contacto").
+  const encabezado = hoja.getRange(1, 1, 1, COLUMNAS.length).getValues()[0];
+  if (encabezado.join('|') !== COLUMNAS.join('|')) {
     hoja.getRange(1, 1, 1, COLUMNAS.length).setValues([COLUMNAS]).setFontWeight('bold');
     hoja.setFrozenRows(1);
     hoja.getRange('F:F').setNumberFormat('yyyy-mm-dd hh:mm');
@@ -160,6 +163,7 @@ function leer_(hoja) {
       comprador: texto_(v[3], 80) || null,
       precio: Number(v[4]) || 0,
       vendida_en: v[5] instanceof Date ? v[5].toISOString() : (v[5] ? String(v[5]) : null),
+      contacto: texto_(v[6], 60).replace(/^'/, '') || null,
     });
   });
   return filas;
@@ -171,7 +175,7 @@ function reescribir_(hoja, filas) {
   if (!filas.length) return;
   filas.sort(function (a, b) { return a.numero - b.numero; });
   hoja.getRange(2, 1, filas.length, COLUMNAS.length).setValues(filas.map(function (f) {
-    return [f.numero, f.estado, celda_(f.vendedor || ''), celda_(f.comprador || ''), f.precio, f.vendida_en ? new Date(f.vendida_en) : ''];
+    return [f.numero, f.estado, celda_(f.vendedor || ''), celda_(f.comprador || ''), f.precio, f.vendida_en ? new Date(f.vendida_en) : '', comoTexto_(f.contacto || '')];
   }));
 }
 
@@ -182,7 +186,7 @@ function buscar_(filas, numero) {
 }
 
 function publica_(f) {
-  return { numero: f.numero, estado: f.estado, vendedor: f.vendedor, comprador: f.comprador, precio: f.precio, vendida_en: f.vendida_en };
+  return { numero: f.numero, estado: f.estado, vendedor: f.vendedor, comprador: f.comprador, contacto: f.contacto, precio: f.precio, vendida_en: f.vendida_en };
 }
 
 function texto_(v, max) {
@@ -192,6 +196,11 @@ function texto_(v, max) {
 // Evita que un nombre como "=FORMULA()" se ejecute como fórmula en la hoja.
 function celda_(s) {
   return /^[=+\-@]/.test(s) ? "'" + s : s;
+}
+
+// Guarda siempre como texto (el apóstrofo no se ve): conserva el "+" y los ceros de los teléfonos.
+function comoTexto_(s) {
+  return s ? "'" + s : '';
 }
 
 function exigirPin_(pin) {

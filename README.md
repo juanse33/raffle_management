@@ -15,7 +15,7 @@ Guarda los datos en **Google Sheets** o en **Supabase**. Sin ninguno de los dos 
 5. Autoriza los permisos (Google avisa "app no verificada": *Configuración avanzada → Ir al proyecto*).
 6. Copia la URL que termina en `/exec` y pégala en `SHEETS_URL` dentro de `index.html`.
 
-La pestaña `boletas` se crea sola. Puedes editarla a mano: la app sincroniza cada pocos segundos.
+La pestaña `boletas` se crea sola con las columnas `numero`, `estado`, `vendedor`, `comprador`, `precio`, `vendida_en` y `contacto`. Puedes editarla a mano: la app sincroniza cada pocos segundos.
 Crear, ajustar o reiniciar la rifa pide el PIN de administrador.
 
 > Si cambias el código del script: **Implementar → Gestionar implementaciones → ✏️ → Versión: Nueva versión → Implementar** (así la URL no cambia).
@@ -34,5 +34,5 @@ Crear, ajustar o reiniciar la rifa pide el PIN de administrador.
 
 ## Seguridad
 
-Cualquiera con el enlace puede registrar y anular ventas: compártelo solo con tus vendedores.
+Cualquiera con el enlace puede registrar y anular ventas, y ver los datos de los compradores (incluido su contacto): compártelo solo con tus vendedores.
 Con Google Sheets, las acciones de administración están protegidas por el PIN (que vive en el script, no en la página).
