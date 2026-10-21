@@ -11,13 +11,15 @@
  *      Nueva implementación → Aplicación web · Ejecutar como: Yo ·
  *      Quién tiene acceso: Cualquier usuario).
  *
- * La pestaña "boletas" se crea sola. Puedes editar sus celdas a mano
- * (la app lo refleja en unos segundos), pero no escribas otras tablas en ella.
+ * Cada rifa es una pestaña de la hoja. La principal ("boletas") se crea
+ * sola; las demás se crean desde la app con "＋ Nueva rifa". Puedes editar
+ * sus celdas a mano (la app lo refleja en unos segundos), pero no escribas
+ * otras tablas en ellas.
  */
 
-const PIN_ADMIN = '1234';   // ← CÁMBIALO. Se pide para crear, ajustar o reiniciar la rifa.
+const PIN_ADMIN = '1234';   // ← CÁMBIALO. Se pide para crear, ajustar, limpiar o reiniciar rifas.
 const ID_HOJA = '';         // Opcional: ID de la hoja si el script NO se creó desde ella.
-const HOJA = 'boletas';
+const HOJA = 'boletas';     // Pestaña de la rifa principal.
 const COLUMNAS = ['numero', 'estado', 'vendedor', 'comprador', 'precio', 'vendida_en', 'contacto'];
 
 function doGet(e) {
@@ -38,13 +40,17 @@ function atender_(p) {
   try {
     const accion = String(p.accion || 'listar');
     if (accion === 'listar') {
-      return json_({ ok: true, filas: leer_(hoja_()).map(publica_) });
+      const hoja = hojaRifa_(p.rifa);
+      const respuesta = { ok: true, rifa: hoja.getName(), filas: leer_(hoja).map(publica_) };
+      if (p.conRifas) respuesta.rifas = rifas_();
+      return json_(respuesta);
     }
+    if (accion === 'listarRifas') return json_({ ok: true, rifas: rifas_() });
     // Las escrituras se atienden una a la vez: así nadie vende la misma boleta dos veces.
     const lock = LockService.getScriptLock();
     if (!lock.tryLock(20000)) falla_('OCUPADO', 'Hay muchas operaciones al mismo tiempo. Intenta de nuevo.');
     try {
-      const resultado = ejecutar_(accion, p);
+      const resultado = accion === 'crearRifa' ? crearRifa_(p) : ejecutar_(accion, p);
       SpreadsheetApp.flush();
       return json_(Object.assign({ ok: true }, resultado));
     } finally {
@@ -56,7 +62,7 @@ function atender_(p) {
 }
 
 function ejecutar_(accion, p) {
-  const hoja = hoja_();
+  const hoja = hojaRifa_(p.rifa);
   const filas = leer_(hoja);
 
   switch (accion) {
@@ -120,6 +126,16 @@ function ejecutar_(accion, p) {
       return {};
     }
 
+    case 'limpiarVentas': {
+      // Deja todas las boletas libres; conserva los números y el precio.
+      exigirPin_(p.pin);
+      const precio = Number(p.precio);
+      reescribir_(hoja, filas.map(function (f) {
+        return { numero: f.numero, estado: 'disponible', vendedor: '', comprador: '', contacto: '', precio: precio >= 0 ? precio : f.precio, vendida_en: null };
+      }));
+      return {};
+    }
+
     case 'verificarPin': {
       exigirPin_(p.pin);
       return {};
@@ -132,19 +148,56 @@ function ejecutar_(accion, p) {
 
 /* ----------------------------- utilidades ----------------------------- */
 
-function hoja_() {
+function libro_() {
   const libro = ID_HOJA ? SpreadsheetApp.openById(ID_HOJA) : SpreadsheetApp.getActiveSpreadsheet();
   if (!libro) falla_('CONFIG', 'El script no está vinculado a una hoja. Escribe el ID de la hoja en ID_HOJA.');
-  let hoja = libro.getSheetByName(HOJA);
-  if (!hoja) hoja = libro.insertSheet(HOJA);
-  // Crea el encabezado, o lo completa si la hoja viene de una versión anterior (sin "contacto").
+  return libro;
+}
+
+// Devuelve la pestaña de la rifa pedida, o la principal si no se indica ninguna.
+function hojaRifa_(nombre) {
+  const libro = libro_();
+  const pedida = texto_(nombre, 40);
+  let hoja;
+  if (pedida) {
+    hoja = libro.getSheetByName(pedida);
+    if (!hoja || !esRifa_(hoja)) falla_('NO_EXISTE', 'La rifa «' + pedida + '» no existe. Revisa el enlace o elige otra rifa.');
+  } else {
+    hoja = libro.getSheetByName(HOJA) || libro.getSheets().filter(esRifa_)[0] || libro.insertSheet(HOJA);
+  }
+  prepararEncabezado_(hoja);
+  return hoja;
+}
+
+// Una pestaña es una rifa si su encabezado empieza por "numero" y "estado".
+function esRifa_(hoja) {
+  const v = hoja.getRange(1, 1, 1, 2).getValues()[0];
+  return String(v[0]).trim().toLowerCase() === 'numero' && String(v[1]).trim().toLowerCase() === 'estado';
+}
+
+function rifas_() {
+  return libro_().getSheets().filter(esRifa_).map(function (h) { return h.getName(); });
+}
+
+function crearRifa_(p) {
+  exigirPin_(p.pin);
+  const nombre = texto_(p.nombre, 40);
+  if (!nombre || /[\[\]*?:\/\\]/.test(nombre)) falla_('DATOS', 'Escribe un nombre válido, sin los signos [ ] * ? : / \\');
+  const libro = libro_();
+  const repetida = libro.getSheets().some(function (h) { return h.getName().toLowerCase() === nombre.toLowerCase(); });
+  if (repetida) falla_('DATOS', 'Ya existe una pestaña llamada «' + nombre + '».');
+  prepararEncabezado_(libro.insertSheet(nombre));
+  return { rifa: nombre };
+}
+
+// Crea el encabezado, o lo completa si la pestaña viene de una versión anterior (sin "contacto").
+function prepararEncabezado_(hoja) {
   const encabezado = hoja.getRange(1, 1, 1, COLUMNAS.length).getValues()[0];
   if (encabezado.join('|') !== COLUMNAS.join('|')) {
     hoja.getRange(1, 1, 1, COLUMNAS.length).setValues([COLUMNAS]).setFontWeight('bold');
     hoja.setFrozenRows(1);
     hoja.getRange('F:F').setNumberFormat('yyyy-mm-dd hh:mm');
   }
-  return hoja;
 }
 
 function leer_(hoja) {

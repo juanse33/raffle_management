@@ -16,7 +16,19 @@ Guarda los datos en **Google Sheets** o en **Supabase**. Sin ninguno de los dos 
 6. Copia la URL que termina en `/exec` y pégala en `SHEETS_URL` dentro de `index.html`.
 
 La pestaña `boletas` se crea sola con las columnas `numero`, `estado`, `vendedor`, `comprador`, `precio`, `vendida_en` y `contacto`. Puedes editarla a mano: la app sincroniza cada pocos segundos.
-Crear, ajustar o reiniciar la rifa pide el PIN de administrador.
+Crear, ajustar, limpiar o reiniciar la rifa pide el PIN de administrador.
+
+### Varias rifas
+
+Cada rifa es una pestaña de la misma hoja. Toca el nombre de la rifa (arriba a la izquierda) y elige **＋ Nueva rifa…**; se crea una pestaña con ese nombre.
+Cada rifa tiene su propio enlace para compartir: `https://<usuario>.github.io/<repositorio>/?rifa=Nombre%20de%20la%20rifa`.
+Sin `?rifa=` se abre la rifa principal (`boletas`). Para borrar una rifa, elimina su pestaña en la hoja.
+
+### Limpiar o reiniciar
+
+En **Configurar**:
+- **Limpiar ventas**: todas las boletas vuelven a estar libres; se conservan los números y el precio.
+- **Reiniciar rifa**: borra todas las boletas para configurarla de nuevo.
 
 > Si cambias el código del script: **Implementar → Gestionar implementaciones → ✏️ → Versión: Nueva versión → Implementar** (así la URL no cambia).
 

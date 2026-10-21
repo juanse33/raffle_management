@@ -122,6 +122,12 @@
     flex: none;
   }
   h1 { font-size: 22px; font-weight: 800; letter-spacing: -.02em; line-height: 1.2; }
+  .titulo-rifa { position: relative; display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+  .titulo-rifa h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .titulo-rifa svg { color: var(--muted); }
+  /* Selector nativo invisible encima del título: tocar el nombre abre la lista de rifas. */
+  #selRifa { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
+  .titulo-rifa:has(#selRifa:focus-visible) { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
   .sub { color: var(--muted); font-size: 13.5px; }
   .acciones { display: flex; align-items: center; gap: 10px; }
 
@@ -622,7 +628,11 @@
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 0 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 0 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"/><path d="M14 5v2M14 11v2M14 17v2"/></svg>
     </div>
     <div>
-      <h1 id="titulo">Gran Rifa</h1>
+      <div class="titulo-rifa">
+        <h1 id="titulo">Gran Rifa</h1>
+        <svg id="chevRifa" hidden width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        <select id="selRifa" hidden aria-label="Cambiar de rifa"></select>
+      </div>
       <p id="subtitulo" class="sub">Cargando…</p>
     </div>
   </div>
@@ -799,10 +809,14 @@
       <div class="campo" id="cfgPinCampo" hidden>
         <label for="cfgPin">PIN de administrador</label>
         <input id="cfgPin" type="password" inputmode="numeric" autocomplete="off" placeholder="El PIN que pusiste en el script">
-        <small class="ayuda">Se pide para crear, ajustar o reiniciar la rifa.</small>
+        <small class="ayuda">Se pide para crear, ajustar, limpiar o reiniciar la rifa.</small>
       </div>
       <ul class="plan" id="cfgPlan"></ul>
       <p class="error" id="cfgError" role="alert"></p>
+      <div class="peligro" id="cfgLimpiar">
+        <div><strong>Limpiar ventas</strong><small>Deja todas las boletas libres. Conserva los números y el precio.</small></div>
+        <button type="button" class="btn btn-peligro-suave" id="btnLimpiar">Limpiar</button>
+      </div>
       <div class="peligro" id="cfgPeligro">
         <div><strong>Reiniciar rifa</strong><small>Borra todas las boletas y ventas para todos.</small></div>
         <button type="button" class="btn btn-peligro-suave" id="btnReiniciar">Reiniciar</button>
@@ -811,6 +825,39 @@
     <div class="d-pie">
       <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
       <button type="submit" class="btn btn-primario" id="btnGuardarCfg">Guardar</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Diálogo: nueva rifa (solo Google Sheets) -->
+<dialog id="dlgNuevaRifa" aria-labelledby="nrTitulo">
+  <form id="formNuevaRifa" novalidate>
+    <div class="d-cab">
+      <div class="icono-cab" aria-hidden="true">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 0 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 0 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"/><path d="M12 9v6M9 12h6"/></svg>
+      </div>
+      <div>
+        <h3 id="nrTitulo">Nueva rifa</h3>
+        <p class="sub">Se crea una pestaña nueva en tu hoja de Google.</p>
+      </div>
+      <button type="button" class="cerrar-x" data-cerrar aria-label="Cerrar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <div class="d-cuerpo">
+      <div class="campo">
+        <label for="nrNombre">Nombre de la rifa</label>
+        <input id="nrNombre" maxlength="40" autocomplete="off" placeholder="Ej. Rifa de Navidad">
+      </div>
+      <div class="campo">
+        <label for="nrPin">PIN de administrador</label>
+        <input id="nrPin" type="password" inputmode="numeric" autocomplete="off">
+      </div>
+      <p class="error" id="nrError" role="alert"></p>
+    </div>
+    <div class="d-pie">
+      <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
+      <button type="submit" class="btn btn-primario" id="btnCrearRifa">Crear rifa</button>
     </div>
   </form>
 </dialog>
@@ -941,6 +988,11 @@ function crearAdaptadorSupabase() {
     async borrarTodo() {
       datos(await tabla().delete().gte('numero', 0));
     },
+    async limpiarVentas(precio) {
+      datos(await tabla()
+        .update({ estado: 'disponible', vendedor: null, comprador: null, contacto: null, vendida_en: null, precio })
+        .gte('numero', 0));
+    },
     suscribir(alCambio, alEstado) {
       sb.channel('rifa-' + TABLA)
         .on('postgres_changes', { event: '*', schema: 'public', table: TABLA }, (p) => alCambio(p.eventType, p.new, p.old))
@@ -952,12 +1004,12 @@ function crearAdaptadorSupabase() {
 /* ---------------------------------------------------------------------
    Capa de datos — Google Sheets (vía Google Apps Script)
    --------------------------------------------------------------------- */
-function crearAdaptadorSheets(url, obtenerPin) {
+function crearAdaptadorSheets(url, obtenerPin, rifaPedida) {
   async function llamar(accion, datos) {
     let resp;
     try {
       // Cuerpo en texto plano: evita la verificación CORS previa, que Apps Script no admite.
-      resp = await fetch(url, { method: 'POST', body: JSON.stringify(Object.assign({ accion }, datos)) });
+      resp = await fetch(url, { method: 'POST', body: JSON.stringify(Object.assign({ accion, rifa: adaptador.rifa }, datos)) });
     } catch (err) {
       throw new ErrorRifa('RED', 'No se pudo conectar con Google Sheets. Revisa tu internet y la SHEETS_URL, y que el script esté pegado e implementado como «Nueva versión» con acceso «Cualquier usuario».');
     }
@@ -971,12 +1023,25 @@ function crearAdaptadorSheets(url, obtenerPin) {
     return json;
   }
   const conPin = (datos) => Object.assign({ pin: obtenerPin() }, datos);
+  let rifasConsultadas = 0;
 
-  return {
+  const adaptador = {
     modo: 'sheets',
     requierePin: true,
+    multiRifa: true,
+    rifa: rifaPedida || '',   // vacío = rifa principal; tras la primera carga, su nombre real
+    rifas: [],
     intervaloSondeo: 6000,   // sin tiempo real: se consulta la hoja cada ~6 s
-    async listar() { return (await llamar('listar')).filas; },
+    async listar() {
+      // La lista de rifas se pide al cargar y luego cada minuto.
+      const conRifas = Date.now() - rifasConsultadas > 60000;
+      const r = await llamar('listar', { conRifas });
+      if (r.rifa) adaptador.rifa = r.rifa;
+      if (r.rifas) { adaptador.rifas = r.rifas; rifasConsultadas = Date.now(); }
+      return r.filas;
+    },
+    async crearRifa(nombre, pin) { return (await llamar('crearRifa', { nombre, pin })).rifa; },
+    async limpiarVentas(precio) { await llamar('limpiarVentas', conPin({ precio })); },
     async vender(numero, vendedor, comprador, contacto) { return (await llamar('vender', { numero, vendedor, comprador, contacto })).fila; },
     async anular(numero) { return (await llamar('anular', { numero })).fila; },
     async insertar(filas, progreso) {
@@ -990,6 +1055,7 @@ function crearAdaptadorSheets(url, obtenerPin) {
     async borrarTodo() { await llamar('borrarTodo', conPin({})); },
     suscribir(alCambio, alEstado) { alEstado('sheets'); },
   };
+  return adaptador;
 }
 
 /* ---------------------------------------------------------------------
@@ -1041,6 +1107,10 @@ function crearAdaptadorLocal() {
       await pausa(); guardar(leer().filter((f) => !(f.numero > numero && f.estado === 'disponible')));
     },
     async borrarTodo() { await pausa(); guardar([]); },
+    async limpiarVentas(precio) {
+      await pausa();
+      guardar(leer().map((f) => ({ ...f, estado: 'disponible', vendedor: null, comprador: null, contacto: null, vendida_en: null, precio })));
+    },
     suscribir(alCambio, alEstado) {
       // Otras pestañas del mismo navegador se sincronizan con el evento "storage".
       window.addEventListener('storage', (e) => { if (e.key === CLAVE) alCambio('RECARGAR'); });
@@ -1095,7 +1165,7 @@ let recargaEnCurso = null;
 let eventosDuranteCarga = null;
 let renderPendiente = false;
 let versionLocal = 0;        // aumenta con cada cambio propio aplicado en pantalla
-let pinEnMemoria = '';
+let pinEnMemoria = leerPinSesion();
 
 function resumen() {
   let vendidas = 0, recaudado = 0, potencial = 0, min = Infinity, max = -Infinity;
@@ -1261,11 +1331,93 @@ function render() {
 }
 
 function renderCabecera(r) {
-  $('#titulo').textContent = NOMBRE_RIFA;
-  document.title = `${NOMBRE_RIFA} · Gestor de Rifas`;
+  const nombre = nombreRifa();
+  $('#titulo').textContent = nombre;
+  document.title = `${nombre} · Gestor de Rifas`;
   $('#subtitulo').textContent = !estado.cargado
     ? (estado.error ? 'Sin conexión' : 'Cargando…')
     : r.total ? `${entero(r.total)} boletas · ${dinero(r.precioActual)} cada una` : 'Rifa sin configurar';
+  renderSelectorRifas();
+}
+
+/* ---------------------------------------------------------------------
+   Varias rifas (Google Sheets): cada rifa es una pestaña de la hoja
+   --------------------------------------------------------------------- */
+const NUEVA_RIFA = '__nueva__';
+
+function rifaDeLaUrl() {
+  try { return new URLSearchParams(location.search).get('rifa') || ''; } catch (e) { return ''; }
+}
+
+// La pestaña principal ("boletas") se muestra con NOMBRE_RIFA; las demás, con su propio nombre.
+const etiquetaRifa = (nombre) => (!nombre || nombre === 'boletas' ? NOMBRE_RIFA : nombre);
+const nombreRifa = () => etiquetaRifa(db && db.multiRifa ? db.rifa : '');
+const slug = (s) => normalizar(s).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'rifa';
+
+function renderSelectorRifas() {
+  const sel = $('#selRifa');
+  const activo = !!(db && db.multiRifa && estado.cargado);
+  sel.hidden = !activo;
+  $('#chevRifa').toggleAttribute('hidden', !activo);   // en SVG la propiedad .hidden no existe
+  if (!activo) return;
+  const rifas = db.rifas.includes(db.rifa) ? db.rifas : [db.rifa, ...db.rifas];
+  const html = rifas.map((n) => `<option value="${esc(n)}">${esc(etiquetaRifa(n))}</option>`).join('')
+    + `<option value="${NUEVA_RIFA}">＋ Nueva rifa…</option>`;
+  if (sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html; }
+  sel.value = db.rifa;
+}
+
+function irARifa(nombre) {
+  const url = new URL(location.href);
+  if (nombre) url.searchParams.set('rifa', nombre); else url.searchParams.delete('rifa');
+  location.href = url.toString();
+}
+
+$('#selRifa').addEventListener('change', (e) => {
+  const valor = e.target.value;
+  if (valor === NUEVA_RIFA) {
+    e.target.value = db.rifa;
+    abrirNuevaRifa();
+  } else if (valor !== db.rifa) {
+    irARifa(valor);
+  }
+});
+
+function abrirNuevaRifa() {
+  $('#nrNombre').value = '';
+  $('#nrPin').value = pinEnMemoria;
+  $('#nrError').textContent = '';
+  $('#dlgNuevaRifa').showModal();
+  $('#nrNombre').focus();
+}
+
+$('#formNuevaRifa').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const nombre = limpiar($('#nrNombre').value);
+  const pin = $('#nrPin').value.trim();
+  const error = $('#nrError');
+  if (!nombre) { error.textContent = 'Escribe un nombre para la rifa.'; $('#nrNombre').focus(); return; }
+  if (/[[\]*?:/\\]/.test(nombre)) { error.textContent = 'El nombre no puede llevar los signos [ ] * ? : / \\'; $('#nrNombre').focus(); return; }
+  if (!pin) { error.textContent = 'Escribe el PIN de administrador.'; $('#nrPin').focus(); return; }
+  const btn = $('#btnCrearRifa');
+  ocupado(btn, true, 'Creando…');
+  try {
+    const creada = await db.crearRifa(nombre, pin);
+    guardarPinSesion(pin);
+    irARifa(creada);
+  } catch (err) {
+    if (err.codigo === 'PIN_INVALIDO') { guardarPinSesion(''); $('#nrPin').value = ''; $('#nrPin').focus(); }
+    error.textContent = mensajeError(err);
+    ocupado(btn, false);
+  }
+});
+
+function leerPinSesion() {
+  try { return sessionStorage.getItem('rifa_pin') || ''; } catch (e) { return ''; }
+}
+function guardarPinSesion(pin) {
+  pinEnMemoria = pin;
+  try { if (pin) sessionStorage.setItem('rifa_pin', pin); else sessionStorage.removeItem('rifa_pin'); } catch (e) { /* sin almacenamiento */ }
 }
 
 function setTexto(el, valor) {
@@ -1306,7 +1458,10 @@ function renderTablero(r) {
   if (!estado.cargado) {
     grid.hidden = true;
     mostrarAviso(estado.error
-      ? `<div class="aviso error"><div class="icono">${ICONO_ERROR}</div><h3>No se pudo cargar la rifa</h3><p>${esc(mensajeError(estado.error))}</p><button class="btn btn-primario" type="button" data-accion="reintentar">Reintentar</button></div>`
+      ? `<div class="aviso error"><div class="icono">${ICONO_ERROR}</div><h3>No se pudo cargar la rifa</h3><p>${esc(mensajeError(estado.error))}</p>${
+        estado.error.codigo === 'NO_EXISTE'
+          ? '<button class="btn btn-primario" type="button" data-accion="principal">Ir a la rifa principal</button>'
+          : '<button class="btn btn-primario" type="button" data-accion="reintentar">Reintentar</button>'}</div>`
       : `<div class="esqueleto" aria-label="Cargando boletas">${'<span></span>'.repeat(40)}</div>`);
     return;
   }
@@ -1642,6 +1797,8 @@ function prepararConfig() {
   $('#cfgInicioAyuda').textContent = hay ? 'Para cambiar la numeración debes reiniciar la rifa.' : '';
   $('#cfgTitulo').textContent = hay ? 'Configuración de la rifa' : 'Crear rifa';
   $('#cfgPeligro').hidden = !hay;
+  $('#cfgLimpiar').hidden = !hay;
+  $('#btnLimpiar').disabled = !r.vendidas;
   $('#btnGuardarCfg').textContent = hay ? 'Guardar cambios' : 'Crear boletas';
   $('#cfgPinCampo').hidden = !(db && db.requierePin);
   $('#cfgError').textContent = '';
@@ -1670,7 +1827,7 @@ function faltaPin() {
 
 function errorDeAdmin(err) {
   if (err.codigo === 'PIN_INVALIDO') {
-    pinEnMemoria = '';
+    guardarPinSesion('');
     $('#cfgPin').value = '';
     $('#cfgPin').focus();
   }
@@ -1778,7 +1935,7 @@ $('#formConfig').addEventListener('submit', async (e) => {
       if (plan.cambiarPrecio) await db.cambiarPrecioDisponibles(plan.precio);
       if (plan.agregar) await db.insertar(filasRango(plan.agregar.desde, plan.agregar.hasta, plan.precio), progreso);
     }
-    if (db.requierePin) pinEnMemoria = pinAdmin();
+    if (db.requierePin) guardarPinSesion(pinAdmin());
     await recargarFresco();
     dlgConfig.close();
     toast(plan.crear ? '¡Rifa creada! Ya puedes vender boletas.' : 'Cambios guardados', 'ok');
@@ -1814,10 +1971,40 @@ $('#btnReiniciar').addEventListener('click', async () => {
   ocupado(btn, true, 'Borrando…');
   try {
     await db.borrarTodo();
-    if (db.requierePin) pinEnMemoria = pinAdmin();
+    if (db.requierePin) guardarPinSesion(pinAdmin());
     estado.boletas.clear();
     await recargarFresco();
     toast('La rifa fue reiniciada. Configura una nueva.', 'info');
+  } catch (err) {
+    mensaje = errorDeAdmin(err);
+  } finally {
+    operando = false;
+    ocupado(btn, false);
+    render();
+    if (dlgConfig.open) prepararConfig();
+    $('#cfgError').textContent = mensaje;
+  }
+});
+
+$('#btnLimpiar').addEventListener('click', async () => {
+  const r = estado.resumen;
+  if (faltaPin()) return;
+  const ok = await confirmar({
+    titulo: '¿Limpiar todas las ventas?',
+    texto: `Las ${entero(r.vendidas)} boletas vendidas (${dinero(r.recaudado)}) quedarán libres y se borrarán vendedores, compradores y contactos. Los números y el precio (${dinero(r.precioActual)}) se conservan. Te recomendamos exportar el CSV antes. No se puede deshacer.`,
+    boton: 'Limpiar ventas',
+    clave: 'LIMPIAR',
+  });
+  if (!ok) return;
+  const btn = $('#btnLimpiar');
+  let mensaje = '';
+  operando = true;
+  ocupado(btn, true, 'Limpiando…');
+  try {
+    await db.limpiarVentas(Number(r.precioActual));
+    if (db.requierePin) guardarPinSesion(pinAdmin());
+    await recargarFresco();
+    toast('Ventas limpiadas: todas las boletas están libres.', 'ok');
   } catch (err) {
     mensaje = errorDeAdmin(err);
   } finally {
@@ -1847,7 +2034,7 @@ $('#btnCsv').addEventListener('click', () => {
   const blob = new Blob(['﻿' + lineas.join('\r\n')], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `rifa-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `${slug(nombreRifa())}-${new Date().toISOString().slice(0, 10)}.csv`;
   document.body.append(a);
   a.click();
   a.remove();
@@ -1865,6 +2052,7 @@ $('#grid').addEventListener('click', (e) => {
 $('#aviso').addEventListener('click', (e) => {
   const accion = e.target.closest('[data-accion]')?.dataset.accion;
   if (accion === 'reintentar') { estado.error = null; programarRender(); recargar(); }
+  if (accion === 'principal') irARifa('');
   if (accion === 'configurar') abrirConfig();
   if (accion === 'limpiar') aplicarFiltro('todas', '');
 });
@@ -1925,7 +2113,7 @@ document.addEventListener('visibilitychange', () => {
 function iniciar() {
   estado.resumen = resumen();
   try {
-    db = sheetsListo() ? crearAdaptadorSheets(SHEETS_URL.trim(), pinAdmin)
+    db = sheetsListo() ? crearAdaptadorSheets(SHEETS_URL.trim(), pinAdmin, rifaDeLaUrl())
       : credencialesListas() ? crearAdaptadorSupabase()
       : crearAdaptadorLocal();
   } catch (err) {
