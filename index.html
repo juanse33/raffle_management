@@ -139,6 +139,8 @@
   .pill[data-estado="conectando"] i { background: var(--warn); }
   .pill[data-estado="caido"] i { background: var(--sold-strong); }
   .pill[data-estado="demo"] i { background: var(--accent); }
+  .pill[data-estado="sheets"] i { background: var(--ok-strong); }
+  .pill[data-estado="error"] i { background: var(--sold-strong); }
   @keyframes latido {
     0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok-strong) 55%, transparent); }
     100% { box-shadow: 0 0 0 9px transparent; }
@@ -599,7 +601,7 @@
 
 <div id="bannerDemo" class="banner" hidden>
   <strong>Modo demo:</strong> los datos se guardan solo en este navegador.
-  Pega tu <code>API_URL</code> y tu <code>API_KEY</code> de Supabase en el código para compartir la rifa en tiempo real.
+  Pega tu <code>SHEETS_URL</code> (Google Sheets) o tus claves de Supabase en el código para compartir la rifa con todos.
 </div>
 
 <header class="cabecera">
@@ -777,6 +779,11 @@
         </select>
         <small class="ayuda" id="cfgInicioAyuda"></small>
       </div>
+      <div class="campo" id="cfgPinCampo" hidden>
+        <label for="cfgPin">PIN de administrador</label>
+        <input id="cfgPin" type="password" inputmode="numeric" autocomplete="off" placeholder="El PIN que pusiste en el script">
+        <small class="ayuda">Se pide para crear, ajustar o reiniciar la rifa.</small>
+      </div>
       <ul class="plan" id="cfgPlan"></ul>
       <p class="error" id="cfgError" role="alert"></p>
       <div class="peligro" id="cfgPeligro">
@@ -816,12 +823,20 @@
 'use strict';
 
 /* =====================================================================
-   1) CREDENCIALES DE SUPABASE  ←  PEGA AQUÍ LAS TUYAS
+   1) BASE DE DATOS  ←  USA UNA DE LAS DOS OPCIONES
+      Si ninguna está configurada, la app funciona en MODO DEMO.
+
+   OPCIÓN A · Google Sheets
+      URL de la "Aplicación web" de Apps Script (termina en /exec).
+      El código del script está en google_apps_script.gs.
+   ===================================================================== */
+const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbwxbPGkRCoc6r_hx9eVCclnxewU-reE9ZFx35ZzhJ1Pbyu6T4oiWrFcm58STs44zFVC/exec';
+
+/* OPCIÓN B · Supabase (deja SHEETS_URL vacía para usarla)
       Supabase > Project Settings > API Keys
       - API_URL: "Project URL"           (ej. https://abcdefgh.supabase.co)
       - API_KEY: clave "publishable" o "anon public"
       ⚠️ Nunca uses la clave "secret" / "service_role" en este archivo.
-      Mientras estén los valores de ejemplo, la app funciona en MODO DEMO.
    ===================================================================== */
 const API_URL = 'https://TU-PROYECTO.supabase.co';
 const API_KEY = 'PEGA_AQUI_TU_API_KEY_PUBLICA';
@@ -917,6 +932,49 @@ function crearAdaptadorSupabase() {
 }
 
 /* ---------------------------------------------------------------------
+   Capa de datos — Google Sheets (vía Google Apps Script)
+   --------------------------------------------------------------------- */
+function crearAdaptadorSheets(url, obtenerPin) {
+  async function llamar(accion, datos) {
+    let resp;
+    try {
+      // Cuerpo en texto plano: evita la verificación CORS previa, que Apps Script no admite.
+      resp = await fetch(url, { method: 'POST', body: JSON.stringify(Object.assign({ accion }, datos)) });
+    } catch (err) {
+      throw new ErrorRifa('RED', 'No se pudo conectar con Google Sheets. Revisa tu internet y la SHEETS_URL, y que el script esté pegado e implementado como «Nueva versión» con acceso «Cualquier usuario».');
+    }
+    let json;
+    try {
+      json = JSON.parse(await resp.text());
+    } catch (err) {
+      throw new ErrorRifa('SCRIPT', 'La SHEETS_URL responde, pero el script no está listo: pega el código de google_apps_script.gs, guarda y actualiza la implementación con «Nueva versión» (acceso: Cualquier usuario).');
+    }
+    if (!json.ok) throw new ErrorRifa(json.codigo || 'ERROR', json.mensaje || undefined);
+    return json;
+  }
+  const conPin = (datos) => Object.assign({ pin: obtenerPin() }, datos);
+
+  return {
+    modo: 'sheets',
+    requierePin: true,
+    intervaloSondeo: 6000,   // sin tiempo real: se consulta la hoja cada ~6 s
+    async listar() { return (await llamar('listar')).filas; },
+    async vender(numero, vendedor, comprador) { return (await llamar('vender', { numero, vendedor, comprador })).fila; },
+    async anular(numero) { return (await llamar('anular', { numero })).fila; },
+    async insertar(filas, progreso) {
+      for (let i = 0; i < filas.length; i += 2000) {
+        await llamar('insertar', conPin({ filas: filas.slice(i, i + 2000) }));
+        if (progreso) progreso(Math.min(i + 2000, filas.length), filas.length);
+      }
+    },
+    async cambiarPrecioDisponibles(precio) { await llamar('cambiarPrecio', conPin({ precio })); },
+    async borrarDisponiblesMayoresA(numero) { await llamar('borrarDisponiblesMayoresA', conPin({ numero })); },
+    async borrarTodo() { await llamar('borrarTodo', conPin({})); },
+    suscribir(alCambio, alEstado) { alEstado('sheets'); },
+  };
+}
+
+/* ---------------------------------------------------------------------
    Capa de datos — Modo demo (localStorage, sin credenciales)
    --------------------------------------------------------------------- */
 function crearAdaptadorLocal() {
@@ -973,6 +1031,10 @@ function crearAdaptadorLocal() {
   };
 }
 
+function sheetsListo() {
+  return /^https:\/\/script\.google\.com\/\S+\/exec$/.test(SHEETS_URL.trim());
+}
+
 function credencialesListas() {
   return /^https:\/\/\S+/.test(API_URL) && !API_URL.includes('TU-PROYECTO') && API_KEY.length > 20 && !API_KEY.startsWith('PEGA_AQUI');
 }
@@ -1014,6 +1076,8 @@ let operando = false;        // true mientras esta pestaña guarda un cambio pro
 let recargaEnCurso = null;
 let eventosDuranteCarga = null;
 let renderPendiente = false;
+let versionLocal = 0;        // aumenta con cada cambio propio aplicado en pantalla
+let pinEnMemoria = '';
 
 function resumen() {
   let vendidas = 0, recaudado = 0, potencial = 0, min = Infinity, max = -Infinity;
@@ -1076,19 +1140,38 @@ function haceCuanto(iso) {
 function recargar() {
   if (recargaEnCurso) return recargaEnCurso;
   eventosDuranteCarga = [];
+  const versionInicial = versionLocal;
   recargaEnCurso = (async () => {
     try {
       const filas = await db.listar();
-      estado.boletas = new Map(filas.map((f) => [f.numero, f]));
+      if (versionLocal !== versionInicial) {
+        // Guardamos algo mientras se descargaba la lista: puede venir desactualizada.
+        estado.ultimaCarga = 0;
+        return;
+      }
+      const previas = estado.boletas;
+      const nuevas = new Map(filas.map((f) => [f.numero, f]));
+      if (estado.cargado) {
+        for (const [n, f] of nuevas) {
+          const p = previas.get(n);
+          if (p && p.estado !== f.estado) {
+            destacar.add(n);
+            if (!operando) avisarSiDialogoAfectado(f);
+          }
+        }
+      }
+      estado.boletas = nuevas;
       // Reaplicamos los cambios en vivo que llegaron mientras se descargaba la lista.
       for (const ev of eventosDuranteCarga) aplicarEvento(...ev);
       estado.cargado = true;
       estado.error = null;
       estado.ultimaCarga = Date.now();
+      if (db.modo === 'sheets' && estado.conexion !== 'sheets') { estado.conexion = 'sheets'; renderConexion(); }
       if (estado.sinRed) { estado.sinRed = false; toast('Conexión recuperada', 'ok'); }
     } catch (err) {
       console.error(err);
       estado.ultimaCarga = Date.now();
+      if (db.modo === 'sheets') { estado.conexion = 'error'; renderConexion(); }
       if (!estado.cargado) estado.error = err;
       else if (!estado.sinRed) { estado.sinRed = true; toast(mensajeError(err), 'error'); }
     } finally {
@@ -1133,6 +1216,7 @@ function avisarSiDialogoAfectado(b) {
 }
 
 function aplicarFila(fila) {
+  versionLocal++;
   estado.boletas.set(fila.numero, fila);
   destacar.add(fila.numero);
   programarRender();
@@ -1310,6 +1394,8 @@ const TEXTO_CONEXION = {
   conectando: ['Conectando…', 'Estableciendo conexión en tiempo real…'],
   caido: ['Sin tiempo real', 'Se actualiza automáticamente cada 20 segundos. Clic para actualizar ahora.'],
   demo: ['Modo demo', 'Datos guardados solo en este navegador.'],
+  sheets: ['Google Sheets', 'Sincronizado con tu hoja de cálculo cada pocos segundos. Clic para actualizar ahora.'],
+  error: ['Sin conexión', 'No se pudo leer la hoja. Reintentando automáticamente…'],
 };
 function renderConexion() {
   const pill = $('#conexion');
@@ -1435,7 +1521,7 @@ $('#formVenta').addEventListener('submit', async (e) => {
   } catch (err) {
     if (err.codigo === 'YA_VENDIDA') {
       dlgVenta.close();
-      await recargar();
+      await recargarFresco();
       const b = estado.boletas.get(numero);
       toast(b && b.vendedor ? `Ups, ${b.vendedor} acaba de vender la boleta ${fmtNum(numero)}.` : 'Esa boleta ya no está disponible.', 'error');
     } else {
@@ -1483,7 +1569,7 @@ $('#btnAnular').addEventListener('click', async () => {
     dlgDetalle.close();
     toast(`La boleta ${fmtNum(numero)} vuelve a estar disponible`, 'info');
   } catch (err) {
-    if (err.codigo === 'YA_DISPONIBLE') { dlgDetalle.close(); await recargar(); toast('Esa venta ya había sido anulada.', 'info'); }
+    if (err.codigo === 'YA_DISPONIBLE') { dlgDetalle.close(); await recargarFresco(); toast('Esa venta ya había sido anulada.', 'info'); }
     else toast(mensajeError(err), 'error');
   } finally {
     operando = false;
@@ -1516,15 +1602,44 @@ function prepararConfig() {
   $('#cfgTitulo').textContent = hay ? 'Configuración de la rifa' : 'Crear rifa';
   $('#cfgPeligro').hidden = !hay;
   $('#btnGuardarCfg').textContent = hay ? 'Guardar cambios' : 'Crear boletas';
+  $('#cfgPinCampo').hidden = !(db && db.requierePin);
   $('#cfgError').textContent = '';
   actualizarPlan();
 }
 
 function abrirConfig() {
   if (!estado.cargado) { toast('Espera a que cargue la rifa.', 'info'); return; }
+  $('#cfgPin').value = pinEnMemoria;
   prepararConfig();
   dlgConfig.showModal();
   cfgPrecio.focus();
+}
+
+function pinAdmin() {
+  return $('#cfgPin').value.trim() || pinEnMemoria;
+}
+
+// En modo Google Sheets las acciones de administración exigen el PIN.
+function faltaPin() {
+  if (!db.requierePin || pinAdmin()) return false;
+  $('#cfgError').textContent = 'Escribe el PIN de administrador.';
+  $('#cfgPin').focus();
+  return true;
+}
+
+function errorDeAdmin(err) {
+  if (err.codigo === 'PIN_INVALIDO') {
+    pinEnMemoria = '';
+    $('#cfgPin').value = '';
+    $('#cfgPin').focus();
+  }
+  return mensajeError(err);
+}
+
+// Espera la recarga en curso (que puede traer datos de antes del cambio) y pide una nueva.
+async function recargarFresco() {
+  if (recargaEnCurso) await recargaEnCurso;
+  return recargar();
 }
 
 function planConfig() {
@@ -1601,6 +1716,7 @@ $('#formConfig').addEventListener('submit', async (e) => {
   e.preventDefault();
   const plan = actualizarPlan();
   if (plan.errores.length || !plan.cambios) return;
+  if (faltaPin()) return;
   if (plan.quitar) {
     const ok = await confirmar({
       titulo: `¿Eliminar ${entero(plan.quitar.cantidad)} boletas?`,
@@ -1621,13 +1737,15 @@ $('#formConfig').addEventListener('submit', async (e) => {
       if (plan.cambiarPrecio) await db.cambiarPrecioDisponibles(plan.precio);
       if (plan.agregar) await db.insertar(filasRango(plan.agregar.desde, plan.agregar.hasta, plan.precio), progreso);
     }
-    await recargar();
+    if (db.requierePin) pinEnMemoria = pinAdmin();
+    await recargarFresco();
     dlgConfig.close();
     toast(plan.crear ? '¡Rifa creada! Ya puedes vender boletas.' : 'Cambios guardados', 'ok');
   } catch (err) {
     console.error(err);
-    await recargar();
-    $('#cfgError').textContent = mensajeError(err);
+    const mensaje = errorDeAdmin(err);
+    await recargarFresco();
+    $('#cfgError').textContent = mensaje;
   } finally {
     operando = false;
     ocupado(btn, false);
@@ -1641,6 +1759,7 @@ $('#formConfig').addEventListener('submit', async (e) => {
 
 $('#btnReiniciar').addEventListener('click', async () => {
   const r = estado.resumen;
+  if (faltaPin()) return;
   const ok = await confirmar({
     titulo: '¿Reiniciar toda la rifa?',
     texto: `Se borrarán las ${entero(r.total)} boletas y ${entero(r.vendidas)} ventas registradas (${dinero(r.recaudado)}) para todos los usuarios. No se puede deshacer.`,
@@ -1649,20 +1768,23 @@ $('#btnReiniciar').addEventListener('click', async () => {
   });
   if (!ok) return;
   const btn = $('#btnReiniciar');
+  let mensaje = '';
   operando = true;
   ocupado(btn, true, 'Borrando…');
   try {
     await db.borrarTodo();
+    if (db.requierePin) pinEnMemoria = pinAdmin();
     estado.boletas.clear();
-    await recargar();
+    await recargarFresco();
     toast('La rifa fue reiniciada. Configura una nueva.', 'info');
   } catch (err) {
-    toast(mensajeError(err), 'error');
+    mensaje = errorDeAdmin(err);
   } finally {
     operando = false;
     ocupado(btn, false);
     render();
     if (dlgConfig.open) prepararConfig();
+    $('#cfgError').textContent = mensaje;
   }
 });
 
@@ -1672,7 +1794,11 @@ $('#btnReiniciar').addEventListener('click', async () => {
 $('#btnCsv').addEventListener('click', () => {
   const filas = [...estado.boletas.values()].sort((a, b) => a.numero - b.numero);
   if (!filas.length) { toast('No hay boletas para exportar.', 'info'); return; }
-  const celda = (v) => { const s = v == null ? '' : String(v); return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const celda = (v) => {
+    let s = v == null ? '' : String(v);
+    if (/^[=+\-@]/.test(s)) s = "'" + s;   // evita que Excel lo interprete como fórmula
+    return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
   const lineas = [['Numero', 'Estado', 'Vendedor', 'Comprador', 'Precio', 'Fecha de venta'].join(';')];
   for (const b of filas) {
     lineas.push([fmtNum(b.numero), b.estado, b.vendedor, b.comprador, Number(b.precio) || 0, b.vendida_en ? fmtFecha.format(new Date(b.vendida_en)) : ''].map(celda).join(';'));
@@ -1758,7 +1884,9 @@ document.addEventListener('visibilitychange', () => {
 function iniciar() {
   estado.resumen = resumen();
   try {
-    db = credencialesListas() ? crearAdaptadorSupabase() : crearAdaptadorLocal();
+    db = sheetsListo() ? crearAdaptadorSheets(SHEETS_URL.trim(), pinAdmin)
+      : credencialesListas() ? crearAdaptadorSupabase()
+      : crearAdaptadorLocal();
   } catch (err) {
     estado.error = err;
     estado.conexion = 'caido';
@@ -1778,12 +1906,13 @@ function iniciar() {
   render();
   recargar();
 
-  // Respaldo: si el tiempo real falla, se consulta la base de datos periódicamente.
+  // Consulta periódica: es la sincronización de Google Sheets y el respaldo si falla el tiempo real.
   setInterval(() => {
-    if (document.hidden || !db) return;
+    if (document.hidden || !db || recargaEnCurso) return;
     const edad = Date.now() - estado.ultimaCarga;
-    if ((estado.conexion !== 'vivo' && edad > 20000) || edad > 120000) recargar();
-  }, 5000);
+    const limite = estado.conexion === 'vivo' ? 120000 : (db.intervaloSondeo || 20000);
+    if (edad > limite) recargar();
+  }, 2000);
   // Refresca los "hace X minutos".
   setInterval(() => { if (estado.resumen) renderRecientes(estado.resumen); }, 60000);
 }
